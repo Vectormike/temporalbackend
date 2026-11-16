@@ -1,0 +1,79 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - temporal-postgres:/var/lib/postgresql/data
+
+  temporal:
+    image: temporalio/auto-setup:1.28.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: postgres
+    ports:
+      - "7233:7233"
+
+  temporal-ui:
+    image: temporalio/ui:2.42.1
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8080:8080"
+
+  stub-service:
+    build: .
+    command: ["/app/stub-service"]
+    environment:
+      STATE_PATH: /data/state.json
+      CAPTURE_MODE: ${CAPTURE_MODE:-success}
+      CAPTURE_DELAY: ${CAPTURE_DELAY:-35s}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    volumes:
+      - stub-state:/data
+    ports:
+      - "8081:8081"
+
+  worker:
+    build: .
+    command: ["/app/worker"]
+    depends_on:
+      stub-service:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      STUB_SERVICE_URL: http://stub-service:8081
+
+  start-payment:
+    build: .
+    entrypoint: ["/app/start-payment"]
+    profiles: ["tools"]
+    depends_on:
+      - worker
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+
+volumes:
+  temporal-postgres:
+  stub-state:
