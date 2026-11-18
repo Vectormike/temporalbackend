@@ -88,28 +88,47 @@ The command waits for completion and prints the workflow result as JSON.
 
 ## Exercise failure and timeout paths
 
-Configure capture to fail, then start a payment with a new generated ID:
+A successful payment runs authorize, ledger pending, capture, and ledger
+completed, then finishes with status `completed`. The runs below show what
+happens when the banking provider does not capture the payment.
+
+Each `docker compose run --rm start-payment` generates a new workflow ID. The
+log line `started workflow_id=...` is the ID to open in the Temporal UI under
+the `default` namespace:
+[http://localhost:8080/namespaces/default/workflows](http://localhost:8080/namespaces/default/workflows).
+
+Configure capture to fail, then start a payment. `env` sets the variable for
+that command in both fish and bash. `--no-deps` keeps Compose from recreating
+the stub with the default success mode when the payment starts:
 
 ```sh
-CAPTURE_MODE=fail docker compose up -d --force-recreate stub-service
-docker compose run --rm start-payment
+env CAPTURE_MODE=fail docker compose up -d --force-recreate --no-deps stub-service
+env CAPTURE_MODE=fail docker compose run --rm --no-deps start-payment
 ```
 
-The activity is attempted five times, then the ledger is marked failed and the
-authorization is released.
+The printed result has `"status": "failed"`. In the Temporal UI the workflow
+row stays Completed, because compensation finished and the workflow returned
+successfully. Open the workflow: the result status is `failed`, the capture
+activity is attempted five times, then the ledger entry is marked failed and
+`compensatePayment` releases the authorization.
 
 Configure the banking provider to respond after the 30-second workflow deadline:
 
 ```sh
-CAPTURE_MODE=timeout CAPTURE_DELAY=35s \
-  docker compose up -d --force-recreate stub-service
-docker compose run --rm start-payment
+env CAPTURE_MODE=timeout CAPTURE_DELAY=35s \
+  docker compose up -d --force-recreate --no-deps stub-service
+env CAPTURE_MODE=timeout CAPTURE_DELAY=35s \
+  docker compose run --rm --no-deps start-payment
 ```
+
+The printed result has `"status": "timed_out"`, and the same compensation steps
+run. The workflow row in the UI stays Completed. This command waits the real
+30 seconds. The Go tests advance workflow time automatically, so they do not.
 
 Restore normal capture behavior:
 
 ```sh
-CAPTURE_MODE=success docker compose up -d --force-recreate stub-service
+env CAPTURE_MODE=success docker compose up -d --force-recreate --no-deps stub-service
 ```
 
 The persisted stub responses can be inspected in the service logs:
